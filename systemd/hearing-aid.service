@@ -1,0 +1,16 @@
+[Unit]
+Description=Smart Hearing Aid (ESP32-S3 4-mic DOA + beamforming)
+After=sound.target network.target
+
+[Service]
+Type=simple
+WorkingDirectory=__INSTALL_DIR__
+ExecStart=/usr/bin/python3 __INSTALL_DIR__/run.py
+Restart=on-failure
+RestartSec=3
+Nice=-5
+User=__USER__
+SupplementaryGroups=audio dialout
+
+[Install]
+WantedBy=multi-user.target

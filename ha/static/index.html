@@ -1,0 +1,81 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Smart Hearing Aid – Live Dashboard</title>
+<style>
+:root{--bg:#0e1116;--card:#171c24;--bd:#262d38;--tx:#e6e9ee;--mut:#8b95a5;--spk:#ff5d5d;--beam:#2ecc8f;--acc:#5aa9ff}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:14px system-ui,sans-serif}
+header{display:flex;gap:12px;align-items:center;padding:12px 18px;border-bottom:1px solid var(--bd)}
+h1{font-size:16px;margin:0;flex:1}.chip{padding:3px 10px;border-radius:99px;background:#232a35;color:var(--mut);font-size:12px}
+.chip.ok{background:#12372a;color:#5ee0a8}.chip.sp{background:#3b1d1d;color:#ff8a8a}.chip.err{background:#5a1a1a;color:#fff}
+main{display:grid;grid-template-columns:minmax(320px,1.2fr) minmax(300px,1fr);gap:14px;padding:14px;max-width:1200px;margin:auto}
+@media(max-width:820px){main{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:14px}
+.card h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);margin:0 0 10px;font-weight:600}
+canvas{width:100%;aspect-ratio:1;display:block}.big{font-size:30px;font-weight:600}.row{display:flex;gap:18px;flex-wrap:wrap}
+.kv{min-width:90px}.kv span{display:block;color:var(--mut);font-size:12px}
+.bar{height:8px;background:#232a35;border-radius:4px;overflow:hidden}.bar i{display:block;height:100%;background:var(--acc);width:0}
+.m{display:grid;grid-template-columns:48px 1fr 56px;gap:8px;align-items:center;margin:6px 0;font-size:12px}
+table{width:100%;border-collapse:collapse;font-size:12px}td{padding:3px 0;border-bottom:1px solid var(--bd)}td:last-child{text-align:right}
+button,select{background:#232a35;color:var(--tx);border:1px solid var(--bd);border-radius:8px;padding:6px 10px;cursor:pointer;font:inherit}
+button.on{background:#12372a;border-color:#2ecc8f}input[type=range]{width:100%}
+#log{height:150px;overflow:auto;font:12px ui-monospace,monospace;color:var(--mut);white-space:pre-wrap}
+.lg{display:flex;gap:14px;font-size:12px;color:var(--mut);margin-top:8px}.lg b{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px}
+</style></head><body>
+<header><h1>Smart Hearing Aid · 4-mic DOA + Beamforming</h1><span id="c-src" class="chip">source</span><span id="c-st" class="chip">connecting…</span></header>
+<main>
+ <section class="card"><h2>Microphone array & directions</h2><canvas id="cv" width="640" height="640"></canvas>
+  <div class="lg"><span><b style="background:var(--spk)"></b>Speaker (DOA)</span><span><b style="background:var(--beam)"></b>Beam</span><span><b style="background:var(--acc)"></b>SRP-PHAT energy</span><span id="truth"></span></div></section>
+ <div style="display:grid;gap:14px;align-content:start">
+  <section class="card"><h2>Detection</h2><div class="row">
+   <div class="kv"><span>Speaker direction</span><div class="big" id="v-spk" style="color:var(--spk)">–</div></div>
+   <div class="kv"><span>Beam direction</span><div class="big" id="v-beam" style="color:var(--beam)">–</div></div>
+   <div class="kv"><span>Confidence</span><div class="big" id="v-conf">–</div></div></div></section>
+  <section class="card"><h2>Processing status</h2><div class="row">
+   <div class="kv"><span>Speech SNR</span><b id="v-snr">–</b></div><div class="kv"><span>CPU / hop</span><b id="v-cpu">–</b></div>
+   <div class="kv"><span>Frames</span><b id="v-fr">–</b></div><div class="kv"><span>Output level</span><b id="v-out">–</b></div></div>
+   <div style="margin-top:12px" id="mics"></div></section>
+  <section class="card"><h2>GCC-PHAT time differences</h2><table id="tdoa"></table></section>
+  <section class="card"><h2>Controls</h2><div class="row" style="align-items:center">
+   <select id="method"><option value="mvdr">MVDR beamformer</option><option value="das">Delay-and-sum</option></select>
+   <button id="nr">Noise reduction</button><button id="pb">Playback</button><button id="lk">Lock beam</button></div>
+   <input id="ang" type="range" min="0" max="359" value="0" style="margin-top:10px"></section>
+  <section class="card"><h2>Live system updates</h2><div id="log"></div></section>
+ </div></main>
+<script>
+const $=id=>document.getElementById(id),cv=$('cv'),g=cv.getContext('2d'),W=640,C=W/2;
+let S=null;const post=d=>fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});
+const rad=a=>a*Math.PI/180,P=(a,r)=>[C+r*Math.cos(rad(a)),C-r*Math.sin(rad(a))];
+function draw(){g.clearRect(0,0,W,W);if(!S){return}
+ const R=250,Rm=110;g.lineWidth=1;g.strokeStyle='#262d38';g.fillStyle='#8b95a5';g.font='15px system-ui';
+ for(const r of[Rm,170,R]){g.beginPath();g.arc(C,C,r,0,7);g.stroke()}
+ for(let a=0;a<360;a+=30){const[x1,y1]=P(a,Rm),[x2,y2]=P(a,R);g.beginPath();g.moveTo(x1,y1);g.lineTo(x2,y2);g.stroke();const[tx,ty]=P(a,R+16);g.textAlign='center';g.textBaseline='middle';g.fillText(a+'°',tx,ty)}
+ const s=S.srp,n=s.length,mn=Math.min(...s),mx=Math.max(...s)||1,st=S.srp_step;
+ g.strokeStyle='#5aa9ff';g.lineWidth=3;g.globalAlpha=.8;
+ for(let i=0;i<n;i++){const v=Math.max(0,(s[i]-mn)/(mx-mn+1e-9));const[x1,y1]=P(i*st,Rm+4),[x2,y2]=P(i*st,Rm+4+v*(R-Rm-30));g.beginPath();g.moveTo(x1,y1);g.lineTo(x2,y2);g.stroke()}
+ g.globalAlpha=1;
+ // beam wedge
+ g.fillStyle='rgba(46,204,143,.22)';g.strokeStyle='#2ecc8f';g.lineWidth=2;g.beginPath();g.moveTo(C,C);
+ for(let a=S.beam-22;a<=S.beam+22;a+=2){const[x,y]=P(a,R-8);g.lineTo(x,y)}g.closePath();g.fill();
+ let[bx,by]=P(S.beam,R-8);g.beginPath();g.moveTo(C,C);g.lineTo(bx,by);g.stroke();
+ // speaker arrow
+ const sp=S.status==='speech';g.strokeStyle='#ff5d5d';g.fillStyle='#ff5d5d';g.lineWidth=4;g.globalAlpha=sp?1:.45;
+ let[sx,sy]=P(S.speaker,R-30);g.beginPath();g.moveTo(C,C);g.lineTo(sx,sy);g.stroke();g.beginPath();g.arc(sx,sy,10,0,7);g.fill();g.globalAlpha=1;
+ if(S.truth!=null){const[tx,ty]=P(S.truth,R+2);g.strokeStyle='#ffd166';g.lineWidth=2;g.beginPath();g.arc(tx,ty,6,0,7);g.stroke()}
+ // mics (physical array)
+ const sc=Rm*.8;g.lineWidth=2;g.strokeStyle='#3a4452';g.beginPath();S.mics.forEach((m,i)=>{const[x,y]=P(m.angle,sc);i?g.lineTo(x,y):g.moveTo(x,y)});g.closePath();g.stroke();
+ S.mics.forEach((m,i)=>{const[x,y]=P(m.angle,sc);const lv=Math.min(1,Math.max(0,(S.mic_db[i]+70)/50));g.fillStyle=`hsl(${210-lv*120},80%,${40+lv*20}%)`;g.beginPath();g.arc(x,y,17,0,7);g.fill();g.fillStyle='#fff';g.font='bold 13px system-ui';g.textAlign='center';g.textBaseline='middle';g.fillText(m.id,x,y)});
+ g.fillStyle='#8b95a5';g.font='12px system-ui';g.fillText(`r = ${S.radius_mm.toFixed(0)} mm`,C,C+4)}
+const fmt=(v,d=0)=>v==null?'–':v.toFixed(d);
+function ui(){if(!S)return;const st=$('c-st');st.textContent=S.status==='speech'?'● speech detected':S.status==='listening'?'listening':S.status;
+ st.className='chip '+(S.status==='speech'?'sp':S.status==='error'?'err':'ok');$('c-src').textContent=S.source;
+ $('v-spk').textContent=fmt(S.speaker)+'°';$('v-beam').textContent=fmt(S.beam)+'°';$('v-conf').textContent=Math.round(Math.min(1,S.conf*3)*100)+'%';
+ $('v-snr').textContent=fmt(S.snr_db,1)+' dB';$('v-cpu').textContent=S.proc_ms.toFixed(1)+' / '+S.budget_ms+' ms';$('v-fr').textContent=S.frames;$('v-out').textContent=fmt(S.out_db,1)+' dBFS';
+ $('mics').innerHTML=S.mic_db.map((d,i)=>`<div class="m"><span>MIC ${i+1}</span><div class="bar"><i style="width:${Math.max(0,Math.min(100,(d+80)*2))}%"></i></div><span>${fmt(d,0)} dB</span></div>`).join('');
+ $('tdoa').innerHTML=S.pairs.map((p,i)=>`<tr><td>MIC ${p[0]} ↔ MIC ${p[1]}</td><td>${S.tdoa_us[i]} µs</td></tr>`).join('');
+ $('method').value=S.method;$('nr').className=S.nr?'on':'';$('pb').className=S.playback?'on':'';$('lk').className=S.locked!=null?'on':'';
+ $('lk').textContent=S.locked!=null?`Locked ${fmt(S.locked)}° – release`:'Lock beam';$('truth').innerHTML=S.truth!=null?'<b style="background:#ffd166"></b>Simulated truth':'';
+ $('log').textContent=S.log.join('\n')}
+$('method').onchange=e=>post({method:e.target.value});$('nr').onclick=()=>post({noise_reduction:!S.nr});$('pb').onclick=()=>post({playback:!S.playback});
+$('lk').onclick=()=>post({lock:S.locked!=null?null:+$('ang').value});$('ang').oninput=e=>{if(S&&S.locked!=null)post({lock:+e.target.value})};
+const es=new EventSource('/api/stream');es.onmessage=e=>{S=JSON.parse(e.data);ui()};es.onerror=()=>{$('c-st').textContent='disconnected';$('c-st').className='chip err'};
+(function loop(){draw();requestAnimationFrame(loop)})();
+</script></body></html>

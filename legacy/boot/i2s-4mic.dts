@@ -1,0 +1,65 @@
+/*
+ * 4x INMP441 on Raspberry Pi 5: RP1 I2S0 (Pi = clock producer) with four data-in lanes.
+ *   SCK GPIO18, WS GPIO19, SD1 GPIO20 (SDI0), SD2 GPIO22 (SDI1), SD3 GPIO24 (SDI2), SD4 GPIO26 (SDI3)
+ * Structure follows the official Raspberry Pi I2S white paper (hifiberry-dac8x + i2s-master-dac overlays).
+ * Variant: dummy codec (most permissive, same codec the official DAC8x overlay uses)
+ */
+/dts-v1/;
+/plugin/;
+
+/ {
+	compatible = "brcm,bcm2712";
+
+	fragment@0 {
+		target = <&gpio>;
+		__overlay__ {
+			rp1_i2s0_mic4: rp1_i2s0_mic4 {
+				function = "i2s0";
+				pins = "gpio18", "gpio19", "gpio20", "gpio22", "gpio24", "gpio26";
+				bias-disable;
+				status = "okay";
+			};
+		};
+	};
+
+	fragment@1 {
+		target = <&i2s_clk_producer>;
+		__overlay__ {
+			pinctrl-names = "default";
+			pinctrl-0 = <&rp1_i2s0_mic4>;
+			status = "okay";
+		};
+	};
+
+	fragment@2 {
+		target-path = "/";
+		__overlay__ {
+			mic4_codec: mic4-codec {
+				#sound-dai-cells = <0>;
+				compatible = "snd-soc-dummy";
+				status = "okay";
+			};
+		};
+	};
+
+	fragment@3 {
+		target = <&sound>;
+		__overlay__ {
+			compatible = "simple-audio-card";
+			i2s-controller = <&i2s_clk_producer>;
+			status = "okay";
+			simple-audio-card,name = "mic4";
+			simple-audio-card,format = "i2s";
+			simple-audio-card,bitclock-master = <&mic4_cpu>;
+			simple-audio-card,frame-master = <&mic4_cpu>;
+			mic4_cpu: simple-audio-card,cpu {
+				sound-dai = <&i2s_clk_producer>;
+				dai-tdm-slot-num = <2>;
+				dai-tdm-slot-width = <32>;
+			};
+			simple-audio-card,codec {
+				sound-dai = <&mic4_codec>;
+			};
+		};
+	};
+};
